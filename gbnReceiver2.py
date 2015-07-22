@@ -13,6 +13,26 @@ requested_packet = 0
 ack_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 ack_socket.bind(('', 0))
 
+def main(filename):
+	global ack_socket
+
+	ack_port = str(ack_socket.getsockname()[1])
+	ack_host = socket.gethostbyaddr(socket.gethostname())[0]
+
+	file = open("recvInfo", "w")
+    file.write(ack_host + " " + ack_port)
+    file.close()
+
+    while True:
+    	data = pickle.loads(ack_socket.recv(256))
+    	if data:
+    		if data.PacketType == PacketType.DataPacket:
+
+    		elif data.PacketType == PacketType.EOTPacket:
+    			# confirm you're expecting an eot packet
+    			# send own EOT packet then exit
+
+
 if __name__ == "__main__":
     #main(sys.argv[1])
     main("output.txt")
