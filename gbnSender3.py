@@ -1,4 +1,4 @@
-﻿import os
+import os
 import socket
 import sys
 import time
@@ -40,8 +40,8 @@ def receiveAckThread():
             if data.packetType == PacketType.ACKPacket:
                 recv_seq_num = data.sequence_num
                 print "PKT RECV ACK " + str(recv_seq_num) + str(data.total_packet_length)
-                if recv_seq_num == expected_ack_num:
-                    expected_ack_num = expected_ack_num + 1
+                if recv_seq_num >= expected_ack_num:
+                    expected_ack_num = recv_seq_num + 1
                     sequence_base = sequence_base + 1
                     sequence_max = sequence_max + 1
                     sendFile(sequence_max, False)
@@ -83,9 +83,12 @@ def sendFile(seqNum, timeout_happened):
         packet.PacketType = PacketType.EOTPacket
         packet.changeSequenceNum(seqNum)
         packet.updateEmptyPacketLength()
-        pickledPacket = pickle.dumps(packet)
+        packet_list = [packet.packet_type, packet.sequence_num, packet.total_packet_length, packet.payload]
+        pickledPacket = pickle.dumps(packet_list)
     else:
-       pickledPacket = pickle.dumps(file_contents[seqNum])
+       packet = file_contents[seqNum]
+       packet_list = [packet.packet_type, packet.sequence_num, packet.total_packet_length, packet.payload]
+       pickledPacket = pickle.dumps(packet_list)
     
     s.sendto(pickledPacket, (hostname, portnum))
     if seqNum >= total_packets:
@@ -93,6 +96,18 @@ def sendFile(seqNum, timeout_happened):
     else:
         print "PKT SEND DATA " + str(seqNum) + " " + str(file_contents[seqNum].total_packet_length)
     threading.Thread(target=waitingForTimeout, args=([seqNum])).start()    
+
+
+def int32(x):
+  if x>0xFFFFFFFF:
+    raise OverflowError
+  if x>0x7FFFFFFF:
+    x=int(0x100000000-x)
+    if x<2147483648:
+      return -x
+    else:
+      return -2147483648
+  return x
 
 def sendFiles(clientSocket):
     print "SEND FILE CALLED"
@@ -108,20 +123,25 @@ def sendFiles(clientSocket):
 
     current_max_window = min(sequence_max, total_packets-1)
     while num_packets_sent <= current_max_window:
-        print str(num_packets_sent) + " " + str(current_max_window)
+        #print str(num_packets_sent) + " " + str(current_max_window)
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.bind(('', 0))
         sequenceNum = file_contents[num_packets_sent].sequenceNum
-        pickledPacket = pickle.dumps(file_contents[num_packets_sent])
+        packet = file_contents[num_packets_sent]
+        packet_list = [packet.packet_type, packet.sequence_num, packet.total_packet_length, packet.payload]
+        print str(sys.getsizeof(packet_list[0]))
+        print str(packet_list[0])
+        pickledPacket = pickle.dumps(packet_list)
 
         # hostname = socket.gethostbyaddr(socket.gethostname())[0]
         # port_num = s.getsockname()[1]
         
         s.sendto(pickledPacket, (hostname, portnum))
+        #print str(sys.getsizeof(pickledPacket))
         print "PKT SEND DATA " + str(sequenceNum) + " " + str(file_contents[num_packets_sent].total_packet_length)
 
         # timeout thread
-        threading.Thread(target=waitingForTimeout, args=([sequenceNum])).start()
+        #threading.Thread(target=waitingForTimeout, args=([sequenceNum])).start()
 
         s.close()
         num_packets_sent = num_packets_sent + 1
@@ -151,6 +171,8 @@ def main(tout, filename):
                 packet.changeSequenceNum(sequenceNum)
                 chunk = f.read(payload_max)
                 if chunk:
+                    #print str(sys.getsizeof(chunk))
+                    #break
                     packet.payload = chunk
                     packet.overridePacketLength(len(chunk))
                     file_contents.append(packet)
@@ -168,33 +190,4 @@ def main(tout, filename):
 
 if __name__ == "__main__":
    #main(sys.argv[1], sys.argv[2])
-    main(100, "helloWorld.py")
-
-# Sender:
-# Sb = 0
-# Sm = N − 1
-# Repeat the following steps forever:
-# 1. If you receive a request number where Rn > Sb 
-#         Sm = Sm + (Rn − Sb)
-#         Sb = Rn
-# 2.  If no packet is in transmission, 
-#         Transmit a packet where Sb <= Sn <= Sm.  
-#         Packets are transmitted in order.
-
-# N  = window size
-# Rn = request number
-# Sn = sequence number
-# Sb = sequence base
-# Sm = sequence max
-
-# Receiver:
-# Rn = 0
-# Do the following forever:
-# If the packet received = Rn and the packet is error free
-#         Accept the packet and send it to a higher layer
-#         Rn = Rn + 1
-#         Send a Request for Rn
-# Else
-#         Refuse packet
-#         Send a Request for Rn
-        
+    main(99999, "example.txt")        
