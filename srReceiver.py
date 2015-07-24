@@ -38,28 +38,24 @@ def main(filename):
             if data_type == PacketType.DataPacket:
                 seqNum = seq_num
                 print "PKT RECV DATA " + str(seqNum) + " " + str(len_of_packet)
-                if seqNum == requested_packet:
-                    payload = chunk
-                    if len(payload) != len_of_packet-12:
-                        continue
-                    output_file.write(payload)
-                    requested_packet = requested_packet + 1
-                else:
+                payload = chunk
+                if len(payload) != len_of_packet-12:
                     continue
+                output_file.seek(seq_num*500)
+                output_file.write(payload)
 
             elif data_type == PacketType.EOTPacket:
                 seqNum = seq_num
                 print "PKT RECV EOT " + str(seqNum) + " 12"
-                if seqNum == requested_packet:
-                    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                    s.bind(('', 0))
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                s.bind(('', 0))
 
-                    new_packet = struct.pack("L4L4L4s500", PacketType.EOTPacket, seqNum, 12, None)
-                    hostname = socket.gethostbyaddr(socket.gethostname())[0]
-                    port_num = s.getsockname()[1]
-                    s.sendto(new_packet, (hostname, port_num))
-                    s.close()
-                    break
+                new_packet = struct.pack("L4L4L4s500", PacketType.EOTPacket, seqNum, 12, None)
+                hostname = socket.gethostbyaddr(socket.gethostname())[0]
+                port_num = s.getsockname()[1]
+                s.sendto(new_packet, (hostname, port_num))
+                s.close()
+                break
     output_file.close()
     sys.exit();
 

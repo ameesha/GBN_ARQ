@@ -7,6 +7,7 @@ import pickle
 import threading
 import signal
 import inspect
+import struct
 from packet import PacketType, Packet
 
 window_size = 10
@@ -15,39 +16,38 @@ sequence_num = 0
 sequence_base = 0
 sequence_max = 9
 timeout = -1
-payload_max = 500
+payload_max = 463
 expected_ack_num = 0
 num_packets_sent = 0
 num_packets_acked = 0
 total_packets = 0
 file_contents = []
+len_of_chunks = []
 hostname = ""
 portnum = -1
 
 current_milli_time = lambda: int(round(time.time() * 1000))
 ack_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 ack_socket.bind(('', 0))
-#ack_port = str(ack_socket.getsockname()[1])
-#ack_host = socket.gethostbyaddr(socket.gethostname())[0]
-# lock = threading.RLock()
 
 def receiveAckThread():
     global expected_ack_num
 
+    unpack_struct = struct.Struct("L4L4L4s0")
+
     while True:
-        data = pickle.loads(ack_socket.recv(256))
+        data = ack_socket.recv(1024)
+        deets = unpack_struct.unpack(data)
+        data_type = deets[0]
+        seq_num = deets[1]
+        len_of_packet = deets[2]
         if data:
-            if data.packetType == PacketType.ACKPacket:
-                recv_seq_num = data.sequence_num
-                print "PKT RECV ACK " + str(recv_seq_num) + str(data.total_packet_length)
-                if recv_seq_num >= expected_ack_num:
-                    expected_ack_num = recv_seq_num + 1
-                    sequence_base = sequence_base + 1
-                    sequence_max = sequence_max + 1
-                    sendFile(sequence_max, False)
-            elif data.packetType == PacketType.EOTPacket:
-                recv_seq_num = data.sequence_num
-                print "PKT RECV EOT " + str(recv_seq_num) + str(data.total_packet_length)             
+            if data_type == PacketType.ACKPacket:
+                recv_seq_num = seq_num
+                print "PKT RECV ACK " + str(recv_seq_num) + str(len_of_packet)
+            elif data_type == PacketType.EOTPacket:
+                recv_seq_num = seq_num
+                print "PKT RECV EOT " + str(recv_seq_num) + str(len_of_packet)             
                 print "Done receiving acks"
                 sys.exit()
 
@@ -77,40 +77,21 @@ def sendFile(seqNum, timeout_happened):
     
     pickledPacket = None
     packet = None
-    print "\n SEQNUM: " + str(seqNum) + " " + str(total_packets) + "\n"
     if seqNum >= total_packets:
-        packet = Packet()
-        packet.PacketType = PacketType.EOTPacket
-        packet.changeSequenceNum(seqNum)
-        packet.updateEmptyPacketLength()
-        packet_list = [packet.packet_type, packet.sequence_num, packet.total_packet_length, packet.payload]
-        pickledPacket = pickle.dumps(packet_list)
+        packet = struct.pack("!L4", PacketType.EOTPacket)
+        packet += struct.pack("!L4", sequenceNum)
+        packet += struct.pack("!L4", 12)
     else:
        packet = file_contents[seqNum]
-       packet_list = [packet.packet_type, packet.sequence_num, packet.total_packet_length, packet.payload]
-       pickledPacket = pickle.dumps(packet_list)
     
-    s.sendto(pickledPacket, (hostname, portnum))
+    s.sendto(packet, (hostname, portnum))
     if seqNum >= total_packets:
         print "PKT SEND EOT " + str(seqNum) + " 12"
     else:
-        print "PKT SEND DATA " + str(seqNum) + " " + str(file_contents[seqNum].total_packet_length)
+        print "PKT SEND DATA " + str(seqNum) + " " + str(len_of_chunks[seqNum].total_packet_length)
     threading.Thread(target=waitingForTimeout, args=([seqNum])).start()    
 
-
-def int32(x):
-  if x>0xFFFFFFFF:
-    raise OverflowError
-  if x>0x7FFFFFFF:
-    x=int(0x100000000-x)
-    if x<2147483648:
-      return -x
-    else:
-      return -2147483648
-  return x
-
 def sendFiles(clientSocket):
-    print "SEND FILE CALLED"
     global file_contents
     global window_size
     global sequence_base
@@ -120,28 +101,21 @@ def sendFiles(clientSocket):
     global timeout
     global hostname
     global portnum
+    global len_of_chunks
 
     current_max_window = min(sequence_max, total_packets-1)
     while num_packets_sent <= current_max_window:
-        #print str(num_packets_sent) + " " + str(current_max_window)
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.bind(('', 0))
-        sequenceNum = file_contents[num_packets_sent].sequenceNum
         packet = file_contents[num_packets_sent]
-        packet_list = [packet.packet_type, packet.sequence_num, packet.total_packet_length, packet.payload]
-        print str(sys.getsizeof(packet_list[0]))
-        print str(packet_list[0])
-        pickledPacket = pickle.dumps(packet_list)
-
-        # hostname = socket.gethostbyaddr(socket.gethostname())[0]
-        # port_num = s.getsockname()[1]
+        packet_deets = len_of_chunks[num_packets_sent]
+        sequenceNum = packet_deets.sequence_num
         
-        s.sendto(pickledPacket, (hostname, portnum))
-        #print str(sys.getsizeof(pickledPacket))
-        print "PKT SEND DATA " + str(sequenceNum) + " " + str(file_contents[num_packets_sent].total_packet_length)
+        s.sendto(packet, (hostname, portnum)) 
+        print "PKT SEND DATA " + str(sequenceNum) + " " + str(packet_deets.total_packet_length)
 
         # timeout thread
-        #threading.Thread(target=waitingForTimeout, args=([sequenceNum])).start()
+        threading.Thread(target=waitingForTimeout, args=([sequenceNum])).start()
 
         s.close()
         num_packets_sent = num_packets_sent + 1
@@ -153,30 +127,36 @@ def main(tout, filename):
     global file_contents
     global total_packets
     global payload_max
+    global len_of_chunks
     
-    timeout = tout
+    timeout = int(tout)
     channelInfo = open("channelInfo", 'r')
     deets = channelInfo.read().split(' ')
     hostname = deets[0]
     portnum = int(deets[1])
     clientSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
+    print payload_max
     print filename
     try:
         with open(filename, 'rb') as f:
             sequenceNum = 0
             while True:
-                packet = Packet()
+                packet = struct.pack("L4", PacketType.DataPacket)
+                packet += struct.pack("L4", sequenceNum)
+
                 f.seek(sequenceNum * payload_max)
-                packet.changeSequenceNum(sequenceNum)
                 chunk = f.read(payload_max)
                 if chunk:
-                    #print str(sys.getsizeof(chunk))
-                    #break
-                    packet.payload = chunk
-                    packet.overridePacketLength(len(chunk))
+                    length_of_chunk = sys.getsizeof(chunk)
+                    packet += struct.pack("L4", length_of_chunk+12)
+                    print length_of_chunk
+                    packet += struct.pack("s"+str(length_of_chunk), chunk)
                     file_contents.append(packet)
-                    #print "PKT SEND EOT " + str(sequenceNum) + " " + str(packet.total_packet_length)
+                    chunk_packet = Packet()
+                    chunk_packet.changeSequenceNum(sequenceNum)
+                    chunk_packet.overridePacketLength(length_of_chunk)
+                    len_of_chunks.append(chunk_packet)
                     sequenceNum = sequenceNum + 1
                 else:
                     break
@@ -189,5 +169,5 @@ def main(tout, filename):
 
 
 if __name__ == "__main__":
-   #main(sys.argv[1], sys.argv[2])
-    main(99999, "example.txt")        
+   main(sys.argv[1], sys.argv[2])
+    # main(99999, "helloWorld.py")        
